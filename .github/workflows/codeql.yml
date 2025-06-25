@@ -1,97 +1,776 @@
-# For most projects, this workflow file will not need changing; you simply need
-# to commit it to your repository.
-#
-# You may wish to alter this file to override the set of languages analyzed,
-# or to provide custom queries or build logic.
-#
-# ******** NOTE ********
-# We have attempted to detect the languages in your repository. Please check
-# the `language` matrix defined below to confirm you have the correct set of
-# supported CodeQL languages.
-#
-name: "CodeQL Advanced"
+npm init -y
+npm install express mongoose bcrypt jsonwebtoken cors dotenv
+MONGO_URI=your_mongodb_connection_string_here
+JWT_SECRET=your_super_secret_key_here
+PORT=5000
+server.js
+server.js
+js
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
 
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  schedule:
-    - cron: '31 1 * * 2'
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-jobs:
-  analyze:
-    name: Analyze (${{ matrix.language }})
-    # Runner size impacts CodeQL analysis time. To learn more, please see:
-    #   - https://gh.io/recommended-hardware-resources-for-running-codeql
-    #   - https://gh.io/supported-runners-and-hardware-resources
-    #   - https://gh.io/using-larger-runners (GitHub.com only)
-    # Consider using larger runners or machines with greater resources for possible analysis time improvements.
-    runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
-    permissions:
-      # required for all workflows
-      security-events: write
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('MongoDB connected'))
+.catch(err => console.error(err));
 
-      # required to fetch internal or private CodeQL packs
-      packages: read
+// User schema
+const userSchema = new mongoose.Schema({
+  username: { type: String, unique: true, required: true },
+  password: { type: String, required: true },
+  claims: { type: Number, default: 0 },
+});
 
-      # only required for workflows in private repositories
-      actions: read
-      contents: read
+const User = mongoose.model('User', userSchema);
 
-    strategy:
-      fail-fast: fast..
-            code generator add -
-       
-        including 
-        # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'swift'
-        # Use `c-cpp` to analyze code written in C, C++ or both
-        # Use 'java-kotlin' to analyze code written in Java, Kotlin or both
-        # Use 'javascript-typescript' to analyze code written in JavaScript, TypeScript or both
-        # To learn more about changing the languages that are analyzed or customizing the build mode for your analysis,
-        # see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning.
-        # If you are analyzing a compiled language, you can modify the 'build-mode' for that language to customize how
-        # your codebase is analyzed, see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/codeql-code-scanning-for-compiled-languages
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+// Register API
+app.post('/register', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password)
+    return res.status(400).json({ error: 'Username and password required' });
 
-    # Add any setup steps before running the `github/codeql-action/init` action.
-    # This includes steps like installing compilers or runtimes (`actions/setup-node`
-    # or others). This is typically only required for manual builds.
-    # - name: Setup runtime (example)
-    #   uses: actions/setup-example@v1
+  try {
+    const existingUser = await User.findOne({ username });
+    if (existingUser)
+      return res.status(400).json({ error: 'Username already taken' });
 
-    # Initializes the CodeQL tools for scanning.
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
-      with:
-        languages: ${{ matrix.language }}
-        build-mode: ${{ matrix.build-mode }}
-        # If you wish to specify custom queries, you can do so here or in a config file.
-        # By default, queries listed here will override any specified in a config file.
-        # Prefix the list here with "+" to use these queries and those in the config file.
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({ username, password: hashedPassword });
+    await user.save();
+    res.status(201).json({ message: 'User registered successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
-        # For more details on CodeQL's query packs, refer to: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
-        # queries: security-extended,security-and-quality
+// Login API
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password)
+    return res.status(400).json({ error: 'Username and password required' });
 
-    # If the analyze step fails for one of the languages you are analyzing with
-    # "We were unable to automatically build your code", modify the matrix above
-    # to set the build mode to "manual" for that language. Then modify this step
-    # to build your code.
-    # ℹ️ Command-line programs to run using the OS shell.
-    # 📚 See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsrun
-    - if: matrix.build-mode == 'manual'
-      shell: bash
-      run: |
-        echo 'If you are using a "manual" build mode for one or more of the' \
-          'languages you are analyzing, replace this with the commands to build' \
-          'your code, for example:'
-        echo '  make bootstrap'
-        echo '  make release'
-        exit 1
+  try {
+    const user = await User.findOne({ username });
+    if (!user)
+      return res.status(400).json({ error: 'Invalid username or password' });
 
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
-      with:
-        category: "/language:${{matrix.language}}"
+    const validPass = await bcrypt.compare(password, user.password);
+    if (!validPass)
+      return res.status(400).json({ error: 'Invalid username or password' });
+
+    const token = jwt.sign(
+      { id: user._id, username: user.username },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    res.json({ token });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Middleware: verify token
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+};
+
+// Claim API (add 10 points)
+app.post('/claim', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    user.claims += 10;
+    await user.save();
+
+    res.json({ message: 'Claim successful', totalClaims: user.claims });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Secure home API
+app.get('/home', authenticateToken, (req, res) => {
+  res.json({ message: Welcome to Tashwin Game Home, ${req.user.username}! });
+});
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(Server running on port ${PORT}));
+node server.js
+Your backend is now live on http://localhost:5000
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tashwin Game - Secure Client</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 400px; margin: 20px auto; }
+    input, button { padding: 10px; margin: 5px 0; width: 100%; }
+    #tokenDisplay { word-wrap: break-word; background: #eee; padding: 10px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+
+  <h2>Tashwin Game</h2>
+
+  <div id="registerDiv">
+    <h3>Register</h3>
+    <input type="text" id="regUsername" placeholder="Username" />
+    <input type="password" id="regPassword" placeholder="Password" />
+    <button onclick="register()">Register</button>
+    <p id="regMsg"></p>
+  </div>
+
+  <hr />
+
+  <div id="loginDiv">
+    <h3>Login</h3>
+    <input type="text" id="loginUsername" placeholder="Username" />
+    <input type="password" id="loginPassword" placeholder="Password" />
+    <button onclick="login()">Login</button>
+    <p id="loginMsg"></p>
+  </div>
+
+  <hr />
+
+  <div id="userDiv" class="hidden">
+    <h3>Welcome, <span id="userNameDisplay"></span></h3>
+    <button onclick="getHome()">Go to Home</button>
+    <button onclick="claimPoints()">Claim Points (+10)</button>
+    <button onclick="logout()">Logout</button>
+
+    <h4>Responses:</h4>
+    <pre id="responseArea"></pre>
+  </div>
+
+<script>
+  const apiBase = 'http://localhost:5000'; // Change if backend URL is different
+  let token = '';
+  let username = '';
+
+  function register() {
+    const username = document.getElementById('regUsername').value.trim();
+    const password = document.getElementById('regPassword').value;
+
+    fetch(${apiBase}/register, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    })
+    .then(res => res.json())
+    .then(data => {
+      document.getElementById('regMsg').textContent = data.message  data.error  JSON.stringify(data);
+    })
+    .catch(() => {
+      document.getElementById('regMsg').textContent = 'Error registering.';
+    });
+  }
+
+  function login() {
+    const uname = document.getElementById('loginUsername').value.trim();
+    const pwd = document.getElementById('loginPassword').value;
+
+    fetch(${apiBase}/login, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: uname, password: pwd })
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.token) {
+        token = data.token;
+        username = uname;
+        document.getElementById('loginMsg').textContent = 'Login successful!';
+        showUserArea();
+      } else {
+        document.getElementById('loginMsg').textContent = data.error || 'Login failed';
+      }
+    })
+    .catch(() => {
+      document.getElementById('loginMsg').textContent = 'Error logging in.';
+    });
+  }
+
+  function showUserArea() {
+    document.getElementById('userNameDisplay').textContent = username;
+    document.getElementById('userDiv').classList.remove('hidden');
+    document.getElementById('registerDiv').classList.add('hidden');
+    document.getElementById('loginDiv').classList.add('hidden');
+  }
+
+  function logout() {
+    token = '';
+    username = '';
+    document.getElementById('userDiv').classList.add('hidden');
+    document.getElementById('registerDiv').classList.remove('hidden');
+    document.getElementById('loginDiv').classList.remove('hidden');
+    document.getElementById('responseArea').textContent = '';
+    document.getElementById('loginMsg').textContent = '';
+    document.getElementById('regMsg').textContent = '';
+  }
+
+  function getHome() {
+    fetch(${apiBase}/home, {
+      headers: { Authorization: Bearer ${token} }
+    })
+    .then(res => res.json())
+    .then(data => {
+      document.getElementById('responseArea').textContent = JSON.stringify(data, null, 2);
+    })
+    .catch(() => {
+      document.getElementById('responseArea').textContent = 'Error fetching home data.';
+    });
+  }
+function claimPoints() {
+    fetch(${apiBase}/claim, {
+      method: 'POST',
+      headers: { Authorization: Bearer ${token} }
+    })
+    .then(res => res.json())
+    .then(data => {
+      document.getElementById('responseArea').textContent = JSON.stringify(data, null, 2);
+    })
+    .catch(() => {
+      document.getElementById('responseArea').textContent = 'Error claiming points.';
+    });
+  }
+</script>
+
+</body>
+</html>
+node server.js
+const rateLimit = require('express-rate-limit');
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests, please try again later.'
+});
+app.use(limiter);const helmet = require('helmet');
+app.use(helmet());
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const { body, validationResult } = require('express-validator');
+
+const app = express();
+
+// Basic Security Middleware
+app.use(helmet());
+
+// CORS - restrict to your frontend domain only
+app.use(cors({
+  origin: 'https://your-frontend-domain.com', // CHANGE this to your frontend URL
+}));
+
+app.use(express.json());
+
+// Rate Limiter for all requests (adjust limits as needed)
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // max 100 requests per IP
+  message: 'Too many requests from this IP, please try again after 15 minutes',
+});
+app.use(generalLimiter);
+
+// Extra stricter rate limiter for login/register to prevent brute force
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: 'Too many login/register attempts, please try again later',
+});
+
+// MongoDB connection
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('MongoDB connected'))
+.catch(err => {
+  console.error('MongoDB connection error:', err);
+  process.exit(1);
+});
+
+// User Schema
+const userSchema = new mongoose.Schema({
+  username: { type: String, unique: true, required: true },
+  password: { type: String, required: true },
+  claims: { type: Number, default: 0 },
+});
+const User = mongoose.model('User', userSchema);
+
+// Register
+app.post('/register', authLimiter,
+  // Validation and sanitization
+  body('username').isLength({ min: 3 }).trim().escape(),
+  body('password').isStrongPassword(), // requires min length, uppercase, number, symbol, etc
+  async (req, res) => {
+    // Validate input
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { username, password } = req.body;
+
+    try {
+      const existingUser = await User.findOne({ username });
+      if (existingUser)
+        return res.status(400).json({ error: 'Username already taken' });
+
+      const hashedPassword = await bcrypt.hash(password, 12);
+      const user = new User({ username, password: hashedPassword });
+      await user.save();
+
+      res.status(201).json({ message: 'User registered successfully' });
+    } catch (err) {
+      console.error('Register error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+// Login
+app.post('/login', authLimiter,
+  body('username').exists().trim().escape(),
+  body('password').exists(),
+  async (req, res) => {
+    // Validate input
+    const errors = validationResult(req);
+    if (!errors.isEmpty())
+      return res.status(400).json({ errors: errors.array() });
+
+    const { username, password } = req.body;
+
+    try {
+      const user = await User.findOne({ username });
+      if (!user)
+        return res.status(400).json({ error: 'Invalid username or password' });
+
+      const validPass = await bcrypt.compare(password, user.password);
+      if (!validPass)
+        return res.status(400).json({ error: 'Invalid username or password' });
+
+      // JWT with short expiry
+      const token = jwt.sign(
+        { id: user._id, username: user.username },
+        process.env.JWT_SECRET,
+        { expiresIn: '15m' }
+      );
+
+      res.json({ token });
+    } catch (err) {
+      console.error('Login error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+// Auth middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader) return res.sendStatus(401);
+  const token = authHeader.split(' ')[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ error: 'Token invalid or expired' });
+    req.user = user;
+    next();
+  });
+};// Claim points
+app.post('/claim', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    user.claims += 10;
+    await user.save();
+
+    res.json({ message: 'Claim successful', totalClaims: user.claims });
+  } catch (err) {
+    console.error('Claim error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Secure home route
+app.get('/home', authenticateToken, (req, res) => {
+  res.json({ message: Welcome to Tashwin Game Home, ${req.user.username}! });
+});
+
+// HTTPS note:
+// For production, run behind HTTPS proxy (Nginx, cloud provider) or use
+// https.createServer(...) with SSL certificates directly in Node.js.
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(Server running on port ${PORT}));
+MONGO_URI=your_mongodb_connection_string_here
+JWT_SECRET=your_strong_jwt_secret_here
+PORT=5000
+from flask import Flask, request, jsonify
+
+app = Flask(name) new tashwin 
+
+# Example in-memory database for codes (in real app, use a real DB)
+codes_db = {
+    "WINGO-9F4T7-BX3P1": False,  # False means not used
+    "WINGO-2E6GH-Y7T9Z": False,
+}
+
+@app.route('/claim', methods=['POST'])
+def claim_code():
+    data = request.json
+    code = data.get('code')
+
+    if not code:
+        return jsonify({"success": False, "message": "Code is required"}), 400
+
+    if code not in codes_db:
+        return jsonify({"success": False, "message": "Invalid code"}), 404
+
+    if codes_db[code]:
+        return jsonify({"success": False, "message": "Code already used"}), 409
+
+    # Mark code as used
+    codes_db[code] = True
+
+    # Here, add logic to grant reward to player
+
+    return jsonify({"success": True, "message": "Code claimed successfully!"})
+  if name == 'main':
+    app.run(debug=True)
+def generate_code(length=12, prefix="WINGO"):
+    # Generate a random alphanumeric code of given length
+    chars = string.ascii_uppercase + string.digits
+    code = ''.join(random.choice(chars) for _ in range(length))
+    return f"{prefix}-{code[:4]}-{code[4:8]}-{code[8:]}"
+
+# Generate 5 example codes
+for _ in range(5):
+    print(generate_code())
+    WINGO-A1B2-C3D4-E5F6
+WINGO-G7H8-I9J0-K1L2
+...
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>User Profile | Wingo Game</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f2f5;
+      margin: 0;
+      padding: 0;
+    }
+    .profile-container {
+      width: 400px;
+      margin: 50px auto;
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    }
+    .profile-container h2 {
+      margin-bottom: 20px;
+      color: #333;
+    }
+    .profile-info {
+      margin-bottom: 20px;
+    }
+    .secure-code-form input {
+      width: 100%;
+      padding: 10px;
+      margin-top: 10px;
+      margin-bottom: 20px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+    .secure-code-form button {
+      width: 100%;
+      padding: 10px;
+      background-color: #28a745;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .secure-code-form button:hover {
+      background-color: #218838;
+    }
+  </style>
+</head>
+<body>
+  <div class="profile-container">
+    <h2>Player Profile</h2>
+    <div class="profile-info">
+      <p><strong>Username:</strong> player123</p>
+      <p><strong>Email:</strong> player@example.com</p>
+      <p><strong>Points:</strong> 1500</p>
+    </div>
+    <div class="secure-code-form">
+      <label for="secureCode">Enter Secure Code</label>
+      <input type="text" id="secureCode" placeholder="e.g., WINGO-XXXX-XXXX">
+      <button onclick="claimCode()">Claim Reward</button>
+    </div>
+    <p id="message"></p>
+  </div>
+
+  <script>
+    function claimCode() {
+      const code = document.getElementById('secureCode').value;
+      fetch('https://your-backend.com/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code })
+      })
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('message').innerText = data.message;
+      })
+      .catch(err => {
+        document.getElementById('message').innerText = "Something went wrong!";
+      });
+    }
+  </script>
+</body>
+</html>
+from flask import Flask, request, jsonify
+
+app = Flask(name)
+codes_db = {
+    "WINGO-A1B2-C3D4": False,
+    "WINGO-X9Y8-Z7W6": False,
+}
+
+@app.route('/claim', methods=['POST'])
+def claim_code():
+    code = request.json.get('code')
+    if not code:
+        return jsonify({"message": "Code is required"}), 400
+    if code not in codes_db:
+        return jsonify({"message": "Invalid code"}), 404
+    if codes_db[code]:
+        return jsonify({"message": "Code already used"}), 409
+    codes_db[code] = True
+    return jsonify({"message": "Code claimed successfully! Reward added."}), 200
+
+if name == 'main':
+    app.run()
+    import uuid
+
+def generate_secure_code(prefix="WINGO"):
+    return f"{prefix}-{uuid.uuid4().hex[:12].upper()}"
+
+print(generate_secure_code(WINGO-8F3D1AC90B22))
+using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.Networking;
+using System.Collections;
+
+public class CodeClaimer : MonoBehaviour
+{
+    public InputField codeInput;
+    public Text responseText;
+
+    public void ClaimCode()
+    {
+        string code = codeInput.text.Trim();
+        StartCoroutine(SendCodeToServer(code));
+    }
+
+    IEnumerator SendCodeToServer(string code)
+    {
+        string url = "http://your-server.com/claim";
+        string jsonData = JsonUtility.ToJson(new CodeData(code));
+        UnityWebRequest www = UnityWebRequest.Put(url, jsonData);
+        www.method = UnityWebRequest.kHttpVerbPOST;
+        www.SetRequestHeader("Content-Type", "application/json");
+
+        yield return www.SendWebRequest();
+
+        if (www.result == UnityWebRequest.Result.Success)
+        {
+            responseText.text = "✅ Code claimed!";
+        }
+        else
+        {
+            responseText.text = "❌ Error: " + www.downloadHandler.text;
+        }
+    }
+
+    [System.Serializable]
+    public class CodeData
+    {
+        public string code;
+        public CodeData(string c) { code = c; }
+    }
+}<input type="text" value={code} onChange={e => setCode(e.target.value)} />
+<button onClick={submitCode}>Claim Code</button>
+
+function submitCode() {
+  fetch("https://your-server.com/claim", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  })
+    .then(res => res.json())
+    .then(data => alert(data.message))
+    .catch(() => alert("Server working "));
+}{
+  "code": "WINGO-A1B2-C3D4",
+  "used": false,
+  "reward": {
+    "coins": 100,
+    "item": null
+  },
+  "used_by": null,
+  "created_at": "2025-06-24T12:00:00Z",
+  "expires_at": "2025-12-31T23:59:59Z"
+}def give_reward_to_player(player_id, reward):
+    # Example: Add coins to player in DB
+    db.players.update_one(
+        {"_id": player_id},
+        {"$inc": {"coins": reward["coins"]}}
+    )<!DOCTYPE html>
+<html>
+<head>
+  <title>Wingo Secure Code Generator</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 30px;
+      background-color: #f0f2f5;
+    }
+    h1 {
+      color: #222;
+    }
+    label {
+      display: block;
+      margin-top: 10px;
+    }
+    input, select {
+      padding: 10px;
+      width: 300px;
+      margin-top: 5px;
+      border-radius: 5px;
+      border: 1px solid #ccc;
+    }
+    button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    pre {
+      background: #fff;
+      padding: 10px;
+      border-radius: 6px;
+      margin-top: 20px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🎮 Wingo Admin – Secure Code Generator</h1>
+
+  <label>Number of Codes</label>
+  <input type="number" id="count" value="10" min="1" max="500">
+
+  <label>Reward (Coins)</label>
+  <input type="number" id="coins" value="100">
+
+  <label>Code Prefix</label>
+  <input type="text" id="prefix" value="WINGO">
+
+  <button onclick="generateCodes()">Generate Codes</button>
+  <button onclick="downloadCSV()">Export CSV</button>
+
+  <pre id="output"></pre>
+
+  <script>
+    let codes = [];
+
+    function generateCode(prefix) {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      const part = () => [...Array(4)].map(() => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
+      return ${prefix}-${part()}-${part()};
+    }
+
+    function generateCodes() {
+      const count = parseInt(document.getElementById("count").value);
+      const coins = parseInt(document.getElementById("coins").value);
+      const prefix = document.getElementById("prefix").value || "WINGO";
+
+      codes = [];
+
+      for (let i = 0; i < count; i++) {
+        const code = generateCode(prefix);
+        codes.push({ code, reward: { coins }, used: false });
+      }
+
+      document.getElementById("output").textContent = JSON.stringify(codes, null, 2);
+    }
+
+    function downloadCSV() {
+      if (codes.length === 0) {
+        alert("No codes generated yet.");
+        return;
+      }
+
+      let csv = "code,coins,used\n";
+      codes.forEach(c => {
+        csv += ${c.code},${c.reward.coins},${c.used}\n;
+      });
+
+      const blob = new Blob([csv], { type: "text/csv" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "wingo_secure_codes.csv";
+      link.click();
+    }
+  </script>
+
+</body>Server started on port ${port}
+</html>Server started on port ${port}
